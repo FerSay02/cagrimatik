@@ -1,0 +1,82 @@
+import { useEffect, useRef, useState } from 'react'
+import { Activity, ArrowRight, AudioLines, Bot, CalendarDays, Check, CircleCheck, Headphones, Mic, MicOff, Phone, PhoneOff, RotateCcw, Send, ShieldCheck, Sparkles, Volume2, VolumeX } from 'lucide-react'
+import { AnimatePresence, motion } from 'motion/react'
+import { useTranslation } from 'react-i18next'
+import { endCall, initialDemo, quoteHotel, sendMessage, startCall, transferCall, type DemoState, type HotelInput, type Message, type Sector } from '../services/demoEngine'
+
+type SpeechResult = { results: ArrayLike<ArrayLike<{ transcript: string }>> }
+type SpeechRecognitionLike = { lang: string; continuous: boolean; interimResults: boolean; onresult: ((e: SpeechResult) => void) | null; onerror: ((e: { error: string }) => void) | null; onend: (() => void) | null; start: () => void; stop: () => void }
+type SpeechWindow = Window & { SpeechRecognition?: new () => SpeechRecognitionLike; webkitSpeechRecognition?: new () => SpeechRecognitionLike }
+const icons = { legal: ShieldCheck, hotel: CalendarDays, sales: Sparkles, commerce: Headphones }
+const todayString = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` }
+
+export default function DemoStudio({ sector, onSector }: { sector: Sector; onSector: (sector: Sector) => void }) {
+  const { t, i18n } = useTranslation()
+  const lang = i18n.language === 'en' ? 'en' : 'tr'
+  const [demo, setDemo] = useState<DemoState>(() => initialDemo(sector))
+  const [input, setInput] = useState('')
+  const [seconds, setSeconds] = useState(0)
+  const [voice, setVoice] = useState(false)
+  const [notice, setNotice] = useState('')
+  const [hotel, setHotel] = useState<HotelInput>({ checkin: '', checkout: '', guests: 2, room: 'standard' })
+  const recognition = useRef<SpeechRecognitionLike | null>(null)
+  const transcriptEnd = useRef<HTMLDivElement>(null)
+  const pending = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const pendingText = useRef('')
+  const previousLang = useRef(lang)
+  const demoRef = useRef(demo)
+  demoRef.current = demo
+
+  const stopSpeech = () => { recognition.current?.stop(); recognition.current = null; if ('speechSynthesis' in window) window.speechSynthesis.cancel() }
+  useEffect(() => { if (previousLang.current !== lang) { stopSpeech(); if (pending.current) clearTimeout(pending.current); if (pendingText.current) setInput(pendingText.current); pendingText.current = ''; setVoice(false); setNotice(t('demo.languageStopped')); setDemo(d => ({ ...d, status: d.status === 'connecting' ? 'idle' : ['listening','speaking','processing','transfer_requested'].includes(d.status) ? 'active' : d.status })); previousLang.current = lang } }, [lang, t])
+  useEffect(() => { if (demo.sector !== sector) { stopSpeech(); if (pending.current) clearTimeout(pending.current); setDemo(initialDemo(sector)); setInput(''); setSeconds(0); setNotice('') } }, [sector, demo.sector])
+  useEffect(() => { setDemo(d => d.hotelQuote && JSON.stringify(d.hotelQuote) !== JSON.stringify(hotel) ? { ...d, stage: 'hotel_details', hotelQuote: null, hotelTotal: null, record: null, outcome: '' } : d) }, [hotel])
+  useEffect(() => { if (!demo.startedAt || ['idle','ended','transferred_demo'].includes(demo.status)) return; const update = () => setSeconds(Math.floor((Date.now() - demo.startedAt!) / 1000)); update(); const timer = setInterval(update, 1000); return () => clearInterval(timer) }, [demo.startedAt, demo.status])
+  useEffect(() => { transcriptEnd.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' }) }, [demo.messages.length])
+  useEffect(() => () => { recognition.current?.stop(); if ('speechSynthesis' in window) window.speechSynthesis.cancel(); if (pending.current) clearTimeout(pending.current) }, [])
+  const active = ['active','listening','processing','speaking'].includes(demo.status)
+  const renderMessage = (m: Message) => {
+    if (m.role === 'user') return m.text
+    const params = { ...m.params }
+    if (m.key === 'flows.hotelReady' && params.price) { params.price = new Intl.NumberFormat(lang === 'tr' ? 'tr-TR' : 'en-US', { style:'currency', currency:'TRY', maximumFractionDigits:0 }).format(Number(params.price)); params.room = t(`forms.${params.room}`) }
+    if (m.key === 'flows.commerceFound' && params.status) { params.status = t(`records.${params.status}`); params.eta = t(`records.${params.eta}`) }
+    return t(m.key!, params)
+  }
+  const speak = (message: Message) => {
+    if (!voice || !('speechSynthesis' in window)) return
+    window.speechSynthesis.cancel()
+    const locale = lang === 'tr' ? 'tr-TR' : 'en-US'
+    const available = window.speechSynthesis.getVoices().find(v => v.lang.toLowerCase().startsWith(lang))
+    if (!available) { setNotice(t('demo.voiceUnavailable')); return }
+    const utterance = new SpeechSynthesisUtterance(renderMessage(message) || '')
+    utterance.lang = locale; utterance.voice = available
+    utterance.onstart = () => setDemo(d => ({ ...d, status: d.status === 'active' ? 'speaking' : d.status }))
+    utterance.onend = () => setDemo(d => ({ ...d, status: d.status === 'speaking' ? 'active' : d.status }))
+    window.speechSynthesis.speak(utterance)
+  }
+  const begin = () => { stopSpeech(); setNotice(''); setSeconds(0); setHotel({ checkin: '', checkout: '', guests: 2, room: 'standard' }); setDemo(d => ({ ...d, status: 'connecting' })); pending.current = setTimeout(() => { const next = startCall(demoRef.current); setDemo(next); if (next.messages[0]) speak(next.messages[0]) }, 350) }
+  const submit = (value = input) => {
+    if (!value.trim() || !active) return
+    if (recognition.current) { recognition.current.stop(); recognition.current = null }
+    if ('speechSynthesis' in window) window.speechSynthesis.cancel()
+    pendingText.current = value; setInput(''); setNotice(''); setDemo(d => ({ ...d, status: 'processing' }))
+    pending.current = setTimeout(() => { pendingText.current = ''; const next = sendMessage(demoRef.current, value, lang); setDemo(next); if (next.messages.at(-1)?.role === 'assistant') speak(next.messages.at(-1)!) }, 360)
+  }
+  const stop = () => { stopSpeech(); if (pending.current) clearTimeout(pending.current); pendingText.current = ''; setDemo(d => endCall(d)) }
+  const transfer = () => { stopSpeech(); if (pending.current) clearTimeout(pending.current); pendingText.current = ''; setDemo(d => ({ ...d, status: 'transfer_requested' })); pending.current = setTimeout(() => setDemo(d => transferCall(d)), 650) }
+  const toggleMic = () => {
+    if (recognition.current) { recognition.current.stop(); recognition.current = null; setDemo(d => ({ ...d, status: 'active' })); return }
+    const win = window as SpeechWindow
+    const Constructor = win.SpeechRecognition || win.webkitSpeechRecognition
+    if (!Constructor) { setNotice(t('demo.speechUnsupported')); return }
+    try { const instance = new Constructor(); instance.lang = lang === 'tr' ? 'tr-TR' : 'en-US'; instance.continuous = false; instance.interimResults = false; instance.onresult = e => { const result = e.results[0]?.[0]?.transcript; if (result) submit(result) }; instance.onerror = e => { setNotice(e.error === 'not-allowed' ? t('demo.speechDenied') : t('status.error')); recognition.current = null; setDemo(d => ({ ...d, status: 'active' })) }; instance.onend = () => { recognition.current = null; setDemo(d => ({ ...d, status: d.status === 'listening' ? 'active' : d.status })) }; recognition.current = instance; instance.start(); setDemo(d => ({ ...d, status: 'listening' })); setNotice(t('demo.privacy')) } catch { setNotice(t('demo.speechDenied')); setDemo(d => ({ ...d, status: 'active' })) }
+  }
+  const toggleVoice = () => { if (voice) { window.speechSynthesis?.cancel(); setVoice(false); setDemo(d => ({ ...d, status: d.status === 'speaking' ? 'active' : d.status })) } else if (!('speechSynthesis' in window)) setNotice(t('demo.voiceUnsupported')); else { setVoice(true); setNotice('') } }
+  const sendHotel = () => { const next = quoteHotel(demo, hotel); setDemo(next); if (next.messages.at(-1)) speak(next.messages.at(-1)!) }
+  const switchSector = (value: Sector) => { if (pending.current) clearTimeout(pending.current); pendingText.current = ''; stopSpeech(); onSector(value) }
+  const formatDuration = `${String(Math.floor(seconds/60)).padStart(2,'0')}:${String(seconds%60).padStart(2,'0')}`
+  const fmtDate = (value: string) => value ? new Intl.DateTimeFormat(lang === 'tr' ? 'tr-TR' : 'en-US', { day:'numeric', month:'short', year:'numeric' }).format(new Date(`${value}T12:00:00`)) : '—'
+  const record = demo.record
+
+  return <section id="demo" className="section demo-section"><div className="container"><div className="section-heading demo-heading"><div><div className="eyebrow">{t('demo.eyebrow')}</div><h2>{t('demo.title')}</h2></div><p>{t('demo.body')}</p></div><div className="studio-shell"><div className="studio-top"><span><span className="studio-live-dot"/> ÇAĞRIMATİK STUDIO <span className="studio-version">/ 01</span></span><span className="studio-demo-badge">{t('common.simulated')}</span></div><div className="studio-grid"><aside className="studio-side studio-agents"><div className="panel-label">01 / {t('demo.choose')}</div><div className="agent-list">{(['legal','hotel','sales','commerce'] as Sector[]).map(item => { const Icon = icons[item]; return <button key={item} className={`agent-option ${sector === item ? 'selected' : ''}`} onClick={() => switchSector(item)} aria-pressed={sector === item}><span className="agent-option-icon"><Icon size={19}/></span><span><strong>{t(`sectors.${item}.agent`)}</strong><small>{t(`sectors.${item}.role`)}</small></span><ArrowRight size={15}/></button> })}</div><div className="suggestions"><div className="panel-label">{t('demo.suggestions')}</div>{(t(`questions.${sector}`, { returnObjects: true }) as string[]).map(q => <button key={q} onClick={() => { if (active) submit(q); else setInput(q) }}>{q}<ArrowRight size={13}/></button>)}</div><p className="sample-note"><ShieldCheck size={15}/>{t('demo.sampleOnly')}</p></aside><div className="studio-call"><div className="panel-label">02 / {t('demo.live')}</div><div className="call-identity"><div className="demo-avatar"><Bot size={30}/></div><div><strong>{t(`sectors.${sector}.agent`)}</strong><span>{t(`sectors.${sector}.role`)}</span></div><div className={`status-tag ${demo.status}`}><i/>{t(`status.${demo.status}`)}</div></div><div className="call-wave-row"><div className={`waveform studio-wave ${demo.status}`} aria-label={t(`status.${demo.status}`)}>{Array.from({length:31},(_,i)=><i key={i} style={{height:`${8 + (i * 11 + 7) % 23}px`,animationDelay:`${i * 25}ms`}}/>)}</div><span>{formatDuration}</span></div><div className="transcript" role="log" aria-live="polite" aria-label={t('demo.live')}><AnimatePresence initial={false}>{demo.messages.length ? demo.messages.map(m => <motion.div key={m.id} className={`message ${m.role}`} initial={{opacity:0,y:8}} animate={{opacity:1,y:0}} exit={{opacity:0}} transition={{duration:.2}}><span className="message-role">{m.role === 'assistant' ? t(`sectors.${sector}.agent`) : t('hero.caller')}</span><p>{renderMessage(m)}</p></motion.div>) : <div className="transcript-empty"><div><AudioLines size={28}/></div><strong>{t('demo.ready')}</strong><p>{t('demo.empty')}</p></div>}</AnimatePresence><div ref={transcriptEnd}/></div>{sector === 'hotel' && active && <div className="hotel-form"><div className="hotel-form-title">{t('forms.room')} · {t('common.simulated')}</div><div className="hotel-fields"><label>{t('forms.checkin')}<input type="date" min={todayString()} value={hotel.checkin} onChange={e => setHotel(h => ({...h,checkin:e.target.value}))}/></label><label>{t('forms.checkout')}<input type="date" min={hotel.checkin || todayString()} value={hotel.checkout} onChange={e => setHotel(h => ({...h,checkout:e.target.value}))}/></label><label>{t('forms.guests')}<input type="number" min="1" max="4" value={hotel.guests} onChange={e => setHotel(h => ({...h,guests:Number(e.target.value)}))}/></label><label>{t('forms.room')}<select value={hotel.room} onChange={e => setHotel(h => ({...h,room:e.target.value as HotelInput['room']}))}><option value="standard">{t('forms.standard')}</option><option value="deluxe">{t('forms.deluxe')}</option><option value="suite">{t('forms.suite')}</option></select></label></div><button className="button button-secondary hotel-check" onClick={sendHotel}>{t('common.more')} <ArrowRight size={15}/></button></div>}<form className="composer" onSubmit={e => { e.preventDefault(); submit() }}><input value={input} maxLength={500} onChange={e => setInput(e.target.value)} placeholder={t('demo.placeholder')} aria-label={t('demo.placeholder')} disabled={!active}/><button type="submit" aria-label={t('demo.send')} disabled={!input.trim() || !active}><Send size={18}/></button></form>{notice && <p role="status" className="demo-notice">{notice}</p>}<div className="call-actions"><div className="call-main-actions">{demo.status === 'idle' || demo.status === 'ended' || demo.status === 'transferred_demo' ? <button className="button button-primary" onClick={begin}>{demo.status === 'idle' ? <Phone size={17}/> : <RotateCcw size={17}/>} {t(demo.status === 'idle' ? 'demo.begin' : 'demo.restart')}</button> : <button className="button button-danger" onClick={stop}><PhoneOff size={17}/>{t('demo.end')}</button>}{active && <button className="button button-ghost transfer-button" onClick={transfer}><Headphones size={17}/>{t('demo.transfer')}</button>}</div><div className="sound-actions"><button className={`round-control ${demo.status === 'listening' ? 'active' : ''}`} onClick={toggleMic} disabled={!active} title={t(demo.status === 'listening' ? 'demo.micStop' : 'demo.mic')} aria-label={t(demo.status === 'listening' ? 'demo.micStop' : 'demo.mic')}>{demo.status === 'listening' ? <MicOff size={18}/> : <Mic size={18}/>}</button><button className={`round-control ${voice ? 'active' : ''}`} onClick={toggleVoice} title={t(voice ? 'demo.voiceOff' : 'demo.voiceOn')} aria-label={t(voice ? 'demo.voiceOff' : 'demo.voiceOn')}>{voice ? <Volume2 size={18}/> : <VolumeX size={18}/>}</button></div></div></div><aside className="studio-side studio-insights"><div className="panel-label">03 / {t('demo.insights')}</div><div className="insight-block"><small>{t('demo.intent')}</small><strong>{demo.intent ? t(`intent.${demo.intent}`) : t('demo.noIntent')}</strong></div><div className="insight-block"><small>{t('demo.steps')}</small>{demo.steps.length ? <ol className="step-list">{demo.steps.map((item,i) => <li key={item}><span>{i+1}</span>{t(`step.${item}`)}</li>)}</ol> : <p>{t('demo.noSteps')}</p>}</div><div className="insight-block"><small>{t('demo.events')}</small>{demo.events.length ? <div className="events">{demo.events.map(item => <div key={item}><Activity size={13}/>{t(`step.${item}`)} <em>{t('common.simulated')}</em></div>)}</div> : <p>{t('demo.noSteps')}</p>}</div><div className="insight-block record-block"><small>{t('demo.record')}</small>{record ? <div className="record-card"><div className="record-head"><CircleCheck size={17}/><strong>{t(`records.${record.kind}`)}</strong></div>{Object.entries(record.values).map(([key,value]) => <div className="record-row" key={key}><span>{t(`forms.${key}`, { defaultValue: t(`records.${key}`, { defaultValue: key }) })}</span><strong>{key === 'total' || key === 'amount' ? new Intl.NumberFormat(lang === 'tr' ? 'tr-TR' : 'en-US', {style:'currency',currency:'TRY',maximumFractionDigits:0}).format(Number(value)) : key === 'room' ? t(`forms.${value}`) : key === 'status' || key === 'eta' ? t(`records.${value}`) : key === 'checkin' || key === 'checkout' ? fmtDate(String(value)) : String(value)}</strong></div>)}{record.timeline && <div className="timeline"><small>{t('records.timeline')}</small>{record.timeline.map(item => <div key={item}><Check size={12}/>{t(`records.${item}`)}</div>)}</div>}</div> : <p>{t('demo.noRecord')}</p>}</div>{demo.outcome && <div className="outcome"><Check size={16}/>{t(demo.outcome)}</div>}{demo.status === 'transferred_demo' && <div className="transfer-summary"><strong>{t('demo.transferSummary')}</strong><p>{t(`sectors.${sector}.title`)} · {demo.intent ? t(`intent.${demo.intent}`) : t('demo.noIntent')}</p><span>{t('demo.transferDone')}</span></div>}</aside></div></div><div className="demo-disclaimer"><ShieldCheck size={16}/>{t('demo.privacy')}</div></div></section>
+}

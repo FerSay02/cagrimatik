@@ -1,0 +1,4 @@
+import { Braces, Boxes, Headphones, Hotel, Phone, Workflow } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+const icons=[Workflow,Boxes,Hotel,Headphones,Phone,Braces]
+export default function Integrations(){const {t}=useTranslation();const items=t('integrations.items',{returnObjects:true}) as string[];return <section id="integrations" className="section integrations-section"><div className="container integration-layout"><div className="integration-copy"><div className="eyebrow">{t('integrations.eyebrow')}</div><h2>{t('integrations.title')}</h2><p>{t('integrations.body')}</p><span className="integration-caption"><span/> {t('common.simulated')}</span></div><div className="integration-grid">{items.map((item,i)=>{const Icon=icons[i];return <div className="integration-tile" key={item}><Icon size={23}/><span>{item}</span></div>})}</div></div></section>}

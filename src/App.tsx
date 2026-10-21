@@ -1,0 +1,18 @@
+import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { MotionConfig } from 'motion/react'
+import Navbar from './components/Navbar'
+import Hero from './components/Hero'
+import Sectors from './components/Sectors'
+import DemoStudio from './components/DemoStudio'
+import HowItWorks from './components/HowItWorks'
+import Features from './components/Features'
+import Integrations from './components/Integrations'
+import Why from './components/Why'
+import Faq from './components/Faq'
+import Contact from './components/Contact'
+import Footer from './components/Footer'
+import { useTheme } from './hooks/useTheme'
+import type { Sector } from './services/demoEngine'
+
+export default function App(){const {t,i18n}=useTranslation();const {theme,choice,update}=useTheme();const [sector,setSector]=useState<Sector>('hotel');useEffect(()=>{document.documentElement.lang=i18n.language==='en'?'en':'tr';document.title=t('meta.title');let description=document.querySelector('meta[name="description"]');if(!description){description=document.createElement('meta');description.setAttribute('name','description');document.head.appendChild(description)}description.setAttribute('content',t('meta.description'));let og=document.querySelector('meta[property="og:description"]');if(!og){og=document.createElement('meta');og.setAttribute('property','og:description');document.head.appendChild(og)}og.setAttribute('content',t('meta.description'))},[i18n.language,t]);return <MotionConfig reducedMotion="user"><Navbar theme={theme} themeChoice={choice} onTheme={update}/><main><Hero/><Sectors onSelect={setSector}/><DemoStudio sector={sector} onSector={setSector}/><HowItWorks/><Features/><Integrations/><Why/><Faq/><Contact/></main><Footer/></MotionConfig>}

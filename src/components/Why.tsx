@@ -1,0 +1,3 @@
+import { ArrowRight, Check } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+export default function Why(){const {t}=useTranslation();const items=t('why.points',{returnObjects:true}) as string[];return <section className="section why-section"><div className="container why-panel"><div><div className="eyebrow">{t('why.eyebrow')}</div><h2>{t('why.title')}</h2><p>{t('why.body')}</p><a href="#contact" className="button button-light">{t('nav.contact')} <ArrowRight size={17}/></a></div><div className="why-list">{items.map((item,i)=><div key={item}><span><Check size={18}/></span><div><small>0{i+1}</small><strong>{item}</strong></div></div>)}</div></div></section>}

@@ -1,0 +1,4 @@
+import { AudioLines, Languages, ListChecks, Waypoints } from 'lucide-react'
+import { useTranslation } from 'react-i18next'
+const icons=[AudioLines,Waypoints,ListChecks,Languages]
+export default function Features(){const {t}=useTranslation();const items=t('features.items',{returnObjects:true}) as {title:string;body:string}[];return <section id="features" className="section features-section"><div className="container"><div className="section-heading"><div><div className="eyebrow">{t('features.eyebrow')}</div><h2>{t('features.title')}</h2></div><p>{t('features.body')}</p></div><div className="feature-grid">{items.map((item,i)=>{const Icon=icons[i];return <div className="feature-card" key={item.title}><div className="feature-icon"><Icon size={23}/></div><h3>{item.title}</h3><p>{item.body}</p></div>})}</div></div></section>}
